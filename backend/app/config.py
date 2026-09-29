@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     llm_api_key_2: str = ""
     llm_api_key_3: str = ""
 
-    llm_model: str = ""
+    llm_model: str = "gemini-3.6-flash"
     llm_temperature: float = 0.0
 
     database_url: str = ""
