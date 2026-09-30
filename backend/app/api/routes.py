@@ -1,32 +1,142 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.llm_service import LLMService
+from app.memory.database import get_db
+from app.memory.memory_service import (
+    create_session,
+    save_message,
+    get_messages,
+    save_summary,
+    get_summary,
+)
+from app.middleware.summarization import (
+    SummarizationService,
+)
 
-router = APIRouter(prefix="/api", tags=["Question Answering"])
+
+router = APIRouter(
+    prefix="/api",
+    tags=["Question Answering"],
+)
+
 
 llm_service = LLMService()
+summarization_service = SummarizationService()
 
 
 class QuestionRequest(BaseModel):
+    session_id: str
     question: str
 
 
 class AnswerResponse(BaseModel):
+    session_id: str
     answer: str
 
 
-@router.post("/ask", response_model=AnswerResponse)
-async def ask_question(request: QuestionRequest):
-
+@router.post(
+    "/ask",
+    response_model=AnswerResponse,
+)
+async def ask_question(
+    request: QuestionRequest,
+    db: AsyncSession = Depends(get_db),
+):
     if not request.question.strip():
         raise HTTPException(
             status_code=400,
-            detail="Question cannot be empty."
+            detail="Question cannot be empty.",
         )
 
-    answer = await llm_service.generate_response(
-        request.question
+    if not request.session_id.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Session ID cannot be empty.",
+        )
+
+    # Create session if it does not already exist
+    await create_session(
+        db,
+        request.session_id,
     )
 
-    return AnswerResponse(answer=answer)
+    # Retrieve previous conversation
+    history = await get_messages(
+        db,
+        request.session_id,
+    )
+
+    # Retrieve existing summary
+    existing_summary = await get_summary(
+        db,
+        request.session_id,
+    )
+
+    # Save current user message
+    await save_message(
+        db=db,
+        session_id=request.session_id,
+        role="user",
+        content=request.question,
+    )
+
+    # Select context for the LLM
+    if existing_summary:
+        context_history = history[-6:]
+    else:
+        context_history = history
+
+    # Generate answer
+    answer = await llm_service.generate_response(
+        question=request.question,
+        history=context_history,
+        summary=(
+            existing_summary.summary
+            if existing_summary
+            else None
+        ),
+    )
+
+    # Save assistant response
+    await save_message(
+        db=db,
+        session_id=request.session_id,
+        role="assistant",
+        content=answer,
+    )
+
+    # Retrieve updated conversation
+    updated_history = await get_messages(
+        db,
+        request.session_id,
+    )
+
+    # Generate summary when conversation becomes long
+    if len(updated_history) > 10:
+
+        older_messages = updated_history[:-6]
+
+        try:
+
+            summary = await summarization_service.summarize(
+                older_messages
+            )
+
+            await save_summary(
+                db=db,
+                session_id=request.session_id,
+                summary_text=summary,
+            )
+
+        except Exception as exc:
+
+            print(
+                f"Summarization skipped: {exc}"
+            )
+
+    return AnswerResponse(
+        session_id=request.session_id,
+        answer=answer,
+    )
