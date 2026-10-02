@@ -11,18 +11,23 @@ class Session(Base):
 
     id: Mapped[str] = mapped_column(
         String(100),
-        primary_key=True,
+        primary_key=True
+    )
+
+    title: Mapped[str] = mapped_column(
+        String(200),
+        default="New Chat"
     )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=datetime.utcnow
     )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        onupdate=datetime.utcnow
     )
 
 

@@ -10,6 +10,9 @@ from app.memory.memory_service import (
     get_messages,
     save_summary,
     get_summary,
+    get_all_sessions,
+    update_session_title,
+    update_missing_session_titles,
 )
 from app.middleware.summarization import (
     SummarizationService,
@@ -58,8 +61,9 @@ async def ask_question(
 
     # Create session if it does not already exist
     await create_session(
-        db,
-        request.session_id,
+        db=db,
+        session_id=request.session_id,
+        title=request.question[:200],
     )
 
     # Retrieve previous conversation
@@ -140,3 +144,52 @@ async def ask_question(
         session_id=request.session_id,
         answer=answer,
     )
+
+@router.get("/sessions")
+async def get_sessions(
+    db: AsyncSession = Depends(get_db),
+):
+    sessions = await get_all_sessions(db)
+
+    return [
+        {
+            "session_id": session.id,
+            "title": session.title,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+        }
+        for session in sessions
+    ]
+
+@router.post("/sessions/update-titles")
+async def update_session_titles(
+    db: AsyncSession = Depends(get_db),
+):
+    sessions = await update_missing_session_titles(db)
+
+    return {
+        "message": "Session titles updated.",
+        "updated_sessions": len(sessions),
+    }
+
+@router.get("/sessions/{session_id}")
+async def get_session_messages(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    messages = await get_messages(
+        db,
+        session_id,
+    )
+
+    return {
+        "session_id": session_id,
+        "messages": [
+            {
+                "role": message.role,
+                "content": message.content,
+                "created_at": message.created_at,
+            }
+            for message in messages
+        ],
+    }
